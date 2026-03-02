@@ -1,0 +1,12 @@
+# Carpetas de compilación de C#
+bin/
+obj/
+
+# Base de datos local (¡No queremos subir esto a internet!)
+*.db
+*.db-shm
+*.db-wal
+
+# Archivos de entorno y configuraciones de usuario locales
+.env
+appsettings.Development.json

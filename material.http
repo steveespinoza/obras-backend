@@ -1,0 +1,72 @@
+GET http://localhost:5035/mats
+
+###
+
+GET  http://localhost:5035/mats/3
+
+
+###
+POST  http://localhost:5035/mats
+Content-Type: application/json
+
+{
+    "name": "Test Product",
+    "unit": "kg",
+    "quantity": 13.21,
+    "brand": "Generico",
+    "userId" : 3
+}
+###
+PUT http://localhost:5035/mats/1
+Content-Type: application/json
+
+{
+    "name": "Broca",
+    "unit": "kg",
+    "quantity": 13.21,
+    "brand": "Generico",
+    "userId" : 2
+}
+
+### 
+DELETE http://localhost:5035/mats/3
+
+###
+GET  http://localhost:5035/users
+
+### ========================================
+### PRUEBAS PARA EL CATÁLOGO DE ALMACÉN
+### ========================================
+
+### 1. Ver todos los materiales base (Debería devolver un arreglo vacío [] la primera vez)
+GET http://localhost:5035/almacen
+
+###
+
+### 2. Agregar "Cemento" al almacén
+POST http://localhost:5035/almacen
+Content-Type: application/json
+
+{
+    "name": "Cemento Portland"
+}
+
+###
+
+### 3. Agregar "Ladrillo" al almacén
+POST http://localhost:5035/almacen
+Content-Type: application/json
+
+{
+    "name": "Ladrillo King Kong 18 huecos"
+}
+
+###
+
+### 4. Volver a ver todos los materiales (Ahora deberían salir el Cemento y el Ladrillo con sus IDs)
+GET http://localhost:5035/almacen
+
+###
+
+### 5. Eliminar un material del almacén (Asegúrate de cambiar el "1" por el ID real que te devuelva el GET anterior)
+DELETE http://localhost:5035/almacen/1
