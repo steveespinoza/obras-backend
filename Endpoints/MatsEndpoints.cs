@@ -141,6 +141,32 @@ public static class RequerimientosEndpoints
             return Results.NoContent();
         });
 
+
+        // 5.5 GET: Reporte de suma de materiales por rango de fechas
+        group.MapGet("/reporte", async (string material, DateTime inicio, DateTime fin, MaterialContext dbContext) =>
+        {
+            // Ajustamos la fecha "fin" para que incluya todo ese día hasta las 23:59:59
+            var fechaFinAjustada = fin.Date.AddDays(1);
+
+            var reporte = await dbContext.DetallesRequerimiento
+                .Include(d => d.Requerimiento)
+                .Where(d => 
+                    d.Requerimiento!.FechaSolicitud >= inicio.Date &&
+                    d.Requerimiento.FechaSolicitud < fechaFinAjustada &&
+                    d.Name.ToLower().Contains(material.ToLower()) &&
+                    d.Requerimiento.Estado != "Rechazado" // Ignoramos pedidos rechazados
+                )
+                .GroupBy(d => new { d.Name, d.Unit }) // Agrupamos por nombre Y unidad
+                .Select(g => new {
+                    Material = g.Key.Name,
+                    Unidad = g.Key.Unit,
+                    TotalSolicitado = g.Sum(x => x.Quantity)
+                })
+                .ToListAsync();
+
+            return Results.Ok(reporte);
+        });
+
         // DELETE: Borrar un pedido completo (y sus materiales por cascada)
         group.MapDelete("/{id}", async (int id, MaterialContext dbContext) =>
         {

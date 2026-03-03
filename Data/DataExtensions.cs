@@ -1,4 +1,3 @@
-
 using Microsoft.EntityFrameworkCore;
 using Obras.Api.Models;
 
@@ -13,27 +12,52 @@ public static class DataExtensions
                     .GetRequiredService<MaterialContext>();
             dbContext.Database.Migrate();
     }
+    
     public static void AddMatDb(this WebApplicationBuilder builder)
     {
         var connString = builder.Configuration.GetConnectionString("Material");
         builder.Services.AddSqlite<MaterialContext>(connString,
         optionsAction: options => options.UseSeeding((context, _) =>
         {
+            // 1. Sembrar Usuarios (Esto ya lo tenías)
             if (!context.Set<UsuarioAcceso>().Any())
             {
-                // 1. Creamos al Admin
                 var adminAcceso = new UsuarioAcceso { Nombre = "Steve", Apellido = "Jobs", Username = "steveAdmin", Password = "123", Especialidad = "Administración", Telefono = "999999999" };
                 var adminTrabajador = new Trabajador { NombreCompleto = $"{adminAcceso.Nombre} {adminAcceso.Apellido}", UsuarioAcceso = adminAcceso };
 
-                // 2. Creamos a un Trabajador normal
                 var userAcceso = new UsuarioAcceso { Nombre = "Pedro", Apellido = "Perez", Username = "pedroObras", Password = "123", Especialidad = "Construcción", Telefono = "888888888" };
                 var userTrabajador = new Trabajador { NombreCompleto = $"{userAcceso.Nombre} {userAcceso.Apellido}", UsuarioAcceso = userAcceso };
 
-                // Al guardar el Trabajador, EF Core guarda automáticamente el UsuarioAcceso enlazado
                 context.Set<Trabajador>().AddRange(adminTrabajador, userTrabajador);
                 context.SaveChanges();
             }
-        }));    
 
+            // 2. Sembrar Catálogo de Almacén (NUEVO)
+            if (!context.Set<MaterialAlmacen>().Any())
+            {
+                var materialesBase = new List<MaterialAlmacen>
+                {
+                    new MaterialAlmacen { Name = "Cemento Sol" },
+                    new MaterialAlmacen { Name = "Cemento Andino" },
+                    new MaterialAlmacen { Name = "Arena Fina" },
+                    new MaterialAlmacen { Name = "Arena Gruesa" },
+                    new MaterialAlmacen { Name = "Piedra Chancada 1/2" },
+                    new MaterialAlmacen { Name = "Ladrillo King Kong 18 huecos" },
+                    new MaterialAlmacen { Name = "Ladrillo Pandereta" },
+                    new MaterialAlmacen { Name = "Acero Corrugado 1/2\"" },
+                    new MaterialAlmacen { Name = "Acero Corrugado 3/8\"" },
+                    new MaterialAlmacen { Name = "Alambre Negro #16" },
+                    new MaterialAlmacen { Name = "Alambre Negro #8" },
+                    new MaterialAlmacen { Name = "Clavos para madera 2.5\"" },
+                    new MaterialAlmacen { Name = "Clavos para madera 3\"" },
+                    new MaterialAlmacen { Name = "Yeso de construcción" },
+                    new MaterialAlmacen { Name = "Pegamento Chema" },
+                    new MaterialAlmacen { Name = "Tubo PVC 2\"" }
+                };
+
+                context.Set<MaterialAlmacen>().AddRange(materialesBase);
+                context.SaveChanges();
+            }
+        }));    
     }
 }
