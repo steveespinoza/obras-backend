@@ -5,90 +5,146 @@ using Obras.Api.Models;
 
 namespace Obras.Api.Endpoints;
 
-public static class MatsEndpoints
+public static class RequerimientosEndpoints
 {
-    const string GetMatEndpointName = "GetMat";
-
-    public static void MapMatsEndpoints(this WebApplication app)
+    public static void MapRequerimientosEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/mats").RequireAuthorization();
+        var group = app.MapGroup("/requerimientos").RequireAuthorization();
 
-        // GET /mats
-        group.MapGet("/", async (MaterialContext dbContext) => 
-            await dbContext.Mats
-                .Include(mat => mat.Trabajador)
-                    .ThenInclude(t => t.UsuarioAcceso) // <-- NUEVO: Entramos a la tabla de Acceso
-                .Select(mat => new MatSummaryDto(
-                    mat.Id,
-                    mat.Name,
-                    mat.Unit,
-                    mat.Quantity,
-                    mat.Brand,
-                    mat.Trabajador!.NombreCompleto, // <-- 1. Nombre Completo
-                    mat.Trabajador.UsuarioAcceso!.Especialidad, // <-- 2. Especialidad
-                    mat.Estado
+        // GET: Obtener lista de pedidos (Resumen)
+        group.MapGet("/", async (MaterialContext dbContext) =>
+            await dbContext.Requerimientos
+                .Include(r => r.Trabajador)
+                    .ThenInclude(t => t.UsuarioAcceso)
+                .Include(r => r.Detalles) // Incluimos para poder contar
+                .Select(r => new RequerimientoSummaryDto(
+                    r.Id,
+                    r.FechaSolicitud,
+                    r.Estado,
+                    r.Trabajador!.NombreCompleto,
+                    r.Trabajador.UsuarioAcceso!.Especialidad,
+                    r.Detalles.Count // Contamos cuántos materiales tiene el pedido
                 ))
                 .AsNoTracking()
                 .ToListAsync()
         );
 
-        // GET /mats/1
+        // GET: Obtener UN pedido con todos sus materiales adentro
         group.MapGet("/{id}", async (int id, MaterialContext dbContext) =>
         {
-            var mat = await dbContext.Mats.FindAsync(id);
-            return mat is null ? Results.NotFound() : Results.Ok(
-                new MatDetailsDto(mat.Id, mat.Name, mat.Unit, mat.Quantity, mat.Brand, mat.TrabajadorId)
-            );
-        }).WithName(GetMatEndpointName);
+            var req = await dbContext.Requerimientos
+                .Include(r => r.Trabajador)
+                .Include(r => r.Detalles)
+                .FirstOrDefaultAsync(r => r.Id == id);
 
-        // POST /mats
-        group.MapPost("/", async (CreateMatDto newMat, MaterialContext dbContext) =>
-        {
-            Material mat = new()
-            {
-                Name = newMat.Name,
-                Unit = newMat.Unit,
-                Quantity = newMat.Quantity,
-                Brand = newMat.Brand,
-                TrabajadorId = newMat.TrabajadorId // <-- Cambiado
-            };
-            dbContext.Mats.Add(mat);
-            await dbContext.SaveChangesAsync();
+            if (req is null) return Results.NotFound();
 
-            MatDetailsDto matDto = new(mat.Id, mat.Name, mat.Unit, mat.Quantity, mat.Brand, mat.TrabajadorId);
-            return Results.CreatedAtRoute(GetMatEndpointName, new { id = matDto.Id }, matDto);
+            var detallesDto = req.Detalles.Select(d => new DetalleLecturaDto(
+                d.Id, d.Name, d.Unit, d.Quantity, d.Brand)).ToList();
+
+            return Results.Ok(new RequerimientoDetailsDto(
+                req.Id, req.FechaSolicitud, req.Estado, req.Trabajador!.NombreCompleto, detallesDto
+            ));
         });
 
-        // PUT /mats/1
-        group.MapPut("/{id}", async (int id, UpdateMatDto updatedMat, MaterialContext dbContext) =>
+        // POST: Crear un nuevo pedido con múltiples materiales
+        group.MapPost("/", async (CreateRequerimientoDto dto, MaterialContext dbContext) =>
         {
-            var existingMat = await dbContext.Mats.FindAsync(id);
-            if (existingMat is null) return Results.NotFound();
+            // 1. Creamos el Maestro
+            var nuevoRequerimiento = new Requerimiento
+            {
+                TrabajadorId = dto.TrabajadorId,
+                FechaSolicitud = DateTime.UtcNow,
+                Estado = "Pendiente"
+            };
 
-            existingMat.Name = updatedMat.Name;
-            existingMat.Unit = updatedMat.Unit;
-            existingMat.Quantity = updatedMat.Quantity;
-            existingMat.Brand = updatedMat.Brand;
-            existingMat.TrabajadorId = updatedMat.TrabajadorId; // <-- Cambiado
+            // 2. Le agregamos los detalles (Materiales)
+            foreach (var det in dto.Detalles)
+            {
+                nuevoRequerimiento.Detalles.Add(new DetalleRequerimiento
+                {
+                    Name = det.Name,
+                    Unit = det.Unit,
+                    Quantity = det.Quantity,
+                    Brand = det.Brand
+                });
+            }
+
+            // 3. EF Core es inteligente: Al guardar el requerimiento, guarda todos sus detalles
+            dbContext.Requerimientos.Add(nuevoRequerimiento);
+            await dbContext.SaveChangesAsync();
+
+            return Results.Ok(new { Mensaje = "Requerimiento guardado con éxito", Id = nuevoRequerimiento.Id });
+        });
+
+        // PUT: Cambiar estado (Aprobado/Rechazado)
+        group.MapPut("/{id}/estado", async (int id, CambiarEstadoRequerimientoDto dto, MaterialContext dbContext) =>
+        {
+            var req = await dbContext.Requerimientos.FindAsync(id);
+            if (req is null) return Results.NotFound();
+
+            req.Estado = dto.Estado;
+            await dbContext.SaveChangesAsync();
+            return Results.NoContent();
+        });
+
+        // PUT: Actualizar un pedido completo (Editar el "Carrito")
+        group.MapPut("/{id}", async (int id, UpdateRequerimientoDto dto, MaterialContext dbContext) =>
+        {
+            // 1. Buscamos el pedido con todos sus materiales actuales
+            var req = await dbContext.Requerimientos
+                .Include(r => r.Detalles)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (req is null) return Results.NotFound();
+
+            // 2. Regla de negocio: Solo editar si está Pendiente
+            if (req.Estado != "Pendiente") 
+                return Results.BadRequest(new { Message = "Solo se pueden editar pedidos en estado Pendiente." });
+
+            // 3. Obtenemos los IDs de los materiales que React nos está enviando
+            var incomingIds = dto.Detalles.Where(d => d.Id.HasValue).Select(d => d.Id.Value).ToList();
+
+            // 4. BORRAR: Si un material estaba en la BD, pero ya no viene de React, lo borramos
+            var detallesAEliminar = req.Detalles.Where(d => !incomingIds.Contains(d.Id)).ToList();
+            dbContext.DetallesRequerimiento.RemoveRange(detallesAEliminar);
+
+            // 5. ACTUALIZAR o AGREGAR
+            foreach (var det in dto.Detalles)
+            {
+                if (det.Id.HasValue && det.Id.Value > 0)
+                {
+                    // Es un material que ya existía, lo actualizamos
+                    var existente = req.Detalles.FirstOrDefault(d => d.Id == det.Id.Value);
+                    if (existente != null)
+                    {
+                        existente.Name = det.Name;
+                        existente.Unit = det.Unit;
+                        existente.Quantity = det.Quantity;
+                        existente.Brand = det.Brand;
+                    }
+                }
+                else
+                {
+                    // Es un material completamente nuevo agregado durante la edición
+                    req.Detalles.Add(new DetalleRequerimiento
+                    {
+                        Name = det.Name,
+                        Unit = det.Unit,
+                        Quantity = det.Quantity,
+                        Brand = det.Brand
+                    });
+                }
+            }
 
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         });
 
-        // DELETE /mats/1
+        // DELETE: Borrar un pedido completo (y sus materiales por cascada)
         group.MapDelete("/{id}", async (int id, MaterialContext dbContext) =>
         {
-            await dbContext.Mats.Where(mat => mat.Id == id).ExecuteDeleteAsync();
-            return Results.NoContent();
-        });
-
-        group.MapPut("/{id}/estado", async (int id, CambiarEstadoDto dto, MaterialContext dbContext) =>
-        {
-            var mat = await dbContext.Mats.FindAsync(id);
-            if (mat is null) return Results.NotFound();
-
-            mat.Estado = dto.Estado; // Actualizamos solo el estado
-            await dbContext.SaveChangesAsync();
+            await dbContext.Requerimientos.Where(r => r.Id == id).ExecuteDeleteAsync();
             return Results.NoContent();
         });
     }

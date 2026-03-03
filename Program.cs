@@ -57,7 +57,7 @@ app.UseAuthentication(); // Primero verifica quién eres
 app.UseAuthorization();  // Luego verifica qué puedes hacer
 
 // Mapeo de Endpoints
-app.MapMatsEndpoints();
+app.MapRequerimientosEndpoints();
 app.MapUsersEndpoints();
 app.MapAlmacenEndpoints();
 
