@@ -20,12 +20,16 @@ public static class DataExtensions
         optionsAction: options => options.UseSeeding((context, _) =>
         {
             // 1. Sembrar Usuarios (Esto ya lo tenías)
+            // 1. Sembrar Usuarios
             if (!context.Set<UsuarioAcceso>().Any())
             {
-                var adminAcceso = new UsuarioAcceso { Nombre = "Steve", Apellido = "Jobs", Username = "steveAdmin", Password = "123", Especialidad = "Administración", Telefono = "999999999" };
+                // Generamos el hash para "123" que usarán ambos
+                var passwordHash = BCrypt.Net.BCrypt.HashPassword("123");
+
+                var adminAcceso = new UsuarioAcceso { Nombre = "Steve", Apellido = "Jobs", Username = "steveAdmin", Password = passwordHash, Especialidad = "Administración", Telefono = "999999999" };
                 var adminTrabajador = new Trabajador { NombreCompleto = $"{adminAcceso.Nombre} {adminAcceso.Apellido}", UsuarioAcceso = adminAcceso };
 
-                var userAcceso = new UsuarioAcceso { Nombre = "Pedro", Apellido = "Perez", Username = "pedroObras", Password = "123", Especialidad = "Construcción", Telefono = "888888888" };
+                var userAcceso = new UsuarioAcceso { Nombre = "Pedro", Apellido = "Perez", Username = "pedroObras", Password = passwordHash, Especialidad = "Construcción", Telefono = "888888888" };
                 var userTrabajador = new Trabajador { NombreCompleto = $"{userAcceso.Nombre} {userAcceso.Apellido}", UsuarioAcceso = userAcceso };
 
                 context.Set<Trabajador>().AddRange(adminTrabajador, userTrabajador);

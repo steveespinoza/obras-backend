@@ -34,15 +34,17 @@ public static class UserEndpoints
         });
 
         // POST: Login
-        group.MapPost("/login", async (LoginDto loginInfo, MaterialContext dbContext, IConfiguration config) =>
+            group.MapPost("/login", async (LoginDto loginInfo, MaterialContext dbContext, IConfiguration config) =>
         {
+            // 1. Buscamos al usuario SOLO por su Username
             var acceso = await dbContext.UsuariosAcceso
                 .Include(u => u.Trabajador)
-                .FirstOrDefaultAsync(u => u.Username == loginInfo.Username && u.Password == loginInfo.Password);
+                .FirstOrDefaultAsync(u => u.Username == loginInfo.Username);
 
-            if (acceso is null || acceso.Trabajador is null)
+            // 2. Verificamos si existe Y si la contraseña coincide con el Hash
+            if (acceso is null || acceso.Trabajador is null || !BCrypt.Net.BCrypt.Verify(loginInfo.Password, acceso.Password))
             {
-                return Results.Unauthorized();
+                return Results.Unauthorized(); // Credenciales inválidas
             }
 
             // 1. Crear los "Claims" (Datos dentro del token)
@@ -94,7 +96,8 @@ public static class UserEndpoints
                 Nombre = dto.Nombre, 
                 Apellido = dto.Apellido, 
                 Username = dto.Username, 
-                Password = dto.Password, // Nota: En un entorno real avanzado, esto se encriptaría.
+                // ¡AQUÍ ESTÁ LA MAGIA! Encriptamos la contraseña antes de guardarla
+                Password = BCrypt.Net.BCrypt.HashPassword(dto.Password), 
                 Especialidad = dto.Especialidad, 
                 Telefono = dto.Telefono 
             };
