@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Obras.Api.Data;
 using Obras.Api.Dtos;
+using Obras.Api.Models;
 
 namespace Obras.Api.Endpoints;
 
@@ -14,14 +15,25 @@ public static class UserEndpoints
     {
         var group = app.MapGroup("/users");
 
-        group.MapGet("/", async(MaterialContext dbContext) =>
-            await dbContext.Trabajadores
-                .Select(t => new { t.Id, t.NombreCompleto })
+        // GET: Obtener lista COMPLETA de todos los usuarios registrados (Para la tabla del Admin)
+        group.MapGet("/", async (MaterialContext dbContext) =>
+        {
+            var usuarios = await dbContext.UsuariosAcceso
+                .Include(u => u.Trabajador) // Traemos la info cruzada del trabajador
+                .Select(u => new {
+                    u.Id,
+                    NombreCompleto = u.Trabajador != null ? u.Trabajador.NombreCompleto : $"{u.Nombre} {u.Apellido}",
+                    u.Username,
+                    u.Especialidad,
+                    u.Telefono
+                })
                 .AsNoTracking()
-                .ToListAsync()
-        );
+                .ToListAsync();
+                
+            return Results.Ok(usuarios);
+        });
 
-        // Agregamos IConfiguration para leer la llave secreta
+        // POST: Login
         group.MapPost("/login", async (LoginDto loginInfo, MaterialContext dbContext, IConfiguration config) =>
         {
             var acceso = await dbContext.UsuariosAcceso
@@ -65,6 +77,41 @@ public static class UserEndpoints
                 IsAdmin = isAdmin,
                 Token = tokenString // <-- ¡Aquí enviamos el pase VIP!
             });
+        });
+
+        // POST: Registro de nuevos usuarios
+        group.MapPost("/registro", async (CreateUserDto dto, MaterialContext dbContext) =>
+        {
+            // 1. Verificamos que el username no esté repetido
+            if (await dbContext.UsuariosAcceso.AnyAsync(u => u.Username == dto.Username))
+            {
+                return Results.BadRequest(new { Message = "El nombre de usuario ya está en uso. Elige otro." });
+            }
+
+            // 2. Creamos los datos de acceso
+            var nuevoAcceso = new UsuarioAcceso 
+            { 
+                Nombre = dto.Nombre, 
+                Apellido = dto.Apellido, 
+                Username = dto.Username, 
+                Password = dto.Password, // Nota: En un entorno real avanzado, esto se encriptaría.
+                Especialidad = dto.Especialidad, 
+                Telefono = dto.Telefono 
+            };
+
+            // 3. Creamos su perfil de trabajador asociado
+            var nuevoTrabajador = new Trabajador 
+            { 
+                NombreCompleto = $"{dto.Nombre} {dto.Apellido}", 
+                UsuarioAcceso = nuevoAcceso 
+            };
+
+            // 4. Guardamos en la BD
+            dbContext.Set<UsuarioAcceso>().Add(nuevoAcceso);
+            dbContext.Set<Trabajador>().Add(nuevoTrabajador);
+            await dbContext.SaveChangesAsync();
+
+            return Results.Ok(new { Message = "Usuario y Trabajador creados con éxito." });
         });
     }
 }
