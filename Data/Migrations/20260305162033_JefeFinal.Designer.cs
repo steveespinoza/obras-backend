@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Obras.Api.Data;
 
@@ -10,9 +11,11 @@ using Obras.Api.Data;
 namespace Obras.Api.Data.Migrations
 {
     [DbContext(typeof(MaterialContext))]
-    partial class MaterialContextModelSnapshot : ModelSnapshot
+    [Migration("20260305162033_JefeFinal")]
+    partial class JefeFinal
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -101,7 +104,7 @@ namespace Obras.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("AdminId")
+                    b.Property<int>("AdminId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Nombre")
@@ -157,10 +160,15 @@ namespace Obras.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("ProyectoId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("UsuarioAccesoId")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ProyectoId");
 
                     b.HasIndex("UsuarioAccesoId")
                         .IsUnique();
@@ -203,21 +211,6 @@ namespace Obras.Api.Data.Migrations
                     b.ToTable("UsuariosAcceso");
                 });
 
-            modelBuilder.Entity("ProyectoTrabajador", b =>
-                {
-                    b.Property<int>("ProyectosId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("TrabajadoresId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("ProyectosId", "TrabajadoresId");
-
-                    b.HasIndex("TrabajadoresId");
-
-                    b.ToTable("TrabajadorProyecto", (string)null);
-                });
-
             modelBuilder.Entity("Obras.Api.Models.DetalleRequerimiento", b =>
                 {
                     b.HasOne("Obras.Api.Models.Requerimiento", "Requerimiento")
@@ -245,7 +238,8 @@ namespace Obras.Api.Data.Migrations
                     b.HasOne("Obras.Api.Models.UsuarioAcceso", "Admin")
                         .WithMany()
                         .HasForeignKey("AdminId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Admin");
                 });
@@ -271,28 +265,21 @@ namespace Obras.Api.Data.Migrations
 
             modelBuilder.Entity("Obras.Api.Models.Trabajador", b =>
                 {
+                    b.HasOne("Obras.Api.Models.Proyecto", "Proyecto")
+                        .WithMany("Trabajadores")
+                        .HasForeignKey("ProyectoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("Obras.Api.Models.UsuarioAcceso", "UsuarioAcceso")
                         .WithOne("Trabajador")
                         .HasForeignKey("Obras.Api.Models.Trabajador", "UsuarioAccesoId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.Navigation("Proyecto");
+
                     b.Navigation("UsuarioAcceso");
-                });
-
-            modelBuilder.Entity("ProyectoTrabajador", b =>
-                {
-                    b.HasOne("Obras.Api.Models.Proyecto", null)
-                        .WithMany()
-                        .HasForeignKey("ProyectosId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Obras.Api.Models.Trabajador", null)
-                        .WithMany()
-                        .HasForeignKey("TrabajadoresId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Obras.Api.Models.Proyecto", b =>
@@ -300,6 +287,8 @@ namespace Obras.Api.Data.Migrations
                     b.Navigation("CatalogoAlmacen");
 
                     b.Navigation("Requerimientos");
+
+                    b.Navigation("Trabajadores");
                 });
 
             modelBuilder.Entity("Obras.Api.Models.Requerimiento", b =>

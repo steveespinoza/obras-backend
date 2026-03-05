@@ -60,6 +60,7 @@ app.UseAuthorization();  // Luego verifica qué puedes hacer
 app.MapRequerimientosEndpoints();
 app.MapUsersEndpoints();
 app.MapAlmacenEndpoints();
+app.MapProyectoEndpoints();
 
 app.MigrateDb();
 

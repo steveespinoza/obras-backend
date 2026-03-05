@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Obras.Api.Data;
 using Obras.Api.Dtos;
 using Obras.Api.Models;
-
+using System.Security.Claims;
 namespace Obras.Api.Endpoints;
 
 public static class RequerimientosEndpoints
@@ -11,31 +11,38 @@ public static class RequerimientosEndpoints
     {
         var group = app.MapGroup("/requerimientos").RequireAuthorization();
 
-        // GET: Obtener lista de pedidos (Resumen)
-        group.MapGet("/", async (MaterialContext dbContext) =>
-            await dbContext.Requerimientos
+// GET: Obtener lista de pedidos (Solo del proyecto actual)
+        group.MapGet("/", async (MaterialContext dbContext, ClaimsPrincipal user) =>
+        {
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
+            return await dbContext.Requerimientos
                 .Include(r => r.Trabajador)
                     .ThenInclude(t => t.UsuarioAcceso)
-                .Include(r => r.Detalles) // Incluimos para poder contar
+                .Include(r => r.Detalles)
+                .Where(r => r.ProyectoId == proyectoId) // <-- ¡El filtro maestro!
                 .Select(r => new RequerimientoSummaryDto(
                     r.Id,
                     r.FechaSolicitud,
                     r.Estado,
                     r.Trabajador!.NombreCompleto,
                     r.Trabajador.UsuarioAcceso!.Especialidad,
-                    r.Detalles.Count // Contamos cuántos materiales tiene el pedido
+                    r.Detalles.Count
                 ))
                 .AsNoTracking()
-                .ToListAsync()
-        );
+                .ToListAsync();
+        });
 
-        // GET: Obtener UN pedido con todos sus materiales adentro
-        group.MapGet("/{id}", async (int id, MaterialContext dbContext) =>
+// GET: Obtener UN pedido con todos sus materiales adentro
+        group.MapGet("/{id}", async (int id, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
             var req = await dbContext.Requerimientos
                 .Include(r => r.Trabajador)
                 .Include(r => r.Detalles)
-                .FirstOrDefaultAsync(r => r.Id == id);
+                // ¡NUEVO! Buscamos por ID y validamos que sea de su proyecto
+                .FirstOrDefaultAsync(r => r.Id == id && r.ProyectoId == proyectoId); 
 
             if (req is null) return Results.NotFound();
 
@@ -47,18 +54,19 @@ public static class RequerimientosEndpoints
             ));
         });
 
-        // POST: Crear un nuevo pedido con múltiples materiales
-        group.MapPost("/", async (CreateRequerimientoDto dto, MaterialContext dbContext) =>
+// POST: Crear un nuevo pedido
+        group.MapPost("/", async (CreateRequerimientoDto dto, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
-            // 1. Creamos el Maestro
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
             var nuevoRequerimiento = new Requerimiento
             {
                 TrabajadorId = dto.TrabajadorId,
                 FechaSolicitud = DateTime.UtcNow,
-                Estado = "Pendiente"
+                Estado = "Pendiente",
+                ProyectoId = proyectoId // <-- Vinculamos el pedido a la obra
             };
 
-            // 2. Le agregamos los detalles (Materiales)
             foreach (var det in dto.Detalles)
             {
                 nuevoRequerimiento.Detalles.Add(new DetalleRequerimiento
@@ -70,17 +78,21 @@ public static class RequerimientosEndpoints
                 });
             }
 
-            // 3. EF Core es inteligente: Al guardar el requerimiento, guarda todos sus detalles
             dbContext.Requerimientos.Add(nuevoRequerimiento);
             await dbContext.SaveChangesAsync();
 
-            return Results.Ok(new { Mensaje = "Requerimiento guardado con éxito", Id = nuevoRequerimiento.Id });
+            return Results.Ok(new { Mensaje = "Requerimiento guardado", Id = nuevoRequerimiento.Id });
         });
 
-        // PUT: Cambiar estado (Aprobado/Rechazado)
-        group.MapPut("/{id}/estado", async (int id, CambiarEstadoRequerimientoDto dto, MaterialContext dbContext) =>
+// PUT: Cambiar estado (Aprobado/Rechazado)
+        group.MapPut("/{id}/estado", async (int id, CambiarEstadoRequerimientoDto dto, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
-            var req = await dbContext.Requerimientos.FindAsync(id);
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
+            // ¡NUEVO! En lugar de FindAsync, usamos FirstOrDefaultAsync para meter las dos condiciones
+            var req = await dbContext.Requerimientos
+                .FirstOrDefaultAsync(r => r.Id == id && r.ProyectoId == proyectoId);
+
             if (req is null) return Results.NotFound();
 
             req.Estado = dto.Estado;
@@ -88,13 +100,16 @@ public static class RequerimientosEndpoints
             return Results.NoContent();
         });
 
-        // PUT: Actualizar un pedido completo (Editar el "Carrito")
-        group.MapPut("/{id}", async (int id, UpdateRequerimientoDto dto, MaterialContext dbContext) =>
+// PUT: Actualizar un pedido completo (Editar el "Carrito")
+        group.MapPut("/{id}", async (int id, UpdateRequerimientoDto dto, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
-            // 1. Buscamos el pedido con todos sus materiales actuales
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
+            // 1. Buscamos el pedido validando la seguridad
             var req = await dbContext.Requerimientos
                 .Include(r => r.Detalles)
-                .FirstOrDefaultAsync(r => r.Id == id);
+                // ¡NUEVO! Validamos ID de pedido y Proyecto
+                .FirstOrDefaultAsync(r => r.Id == id && r.ProyectoId == proyectoId);
 
             if (req is null) return Results.NotFound();
 
@@ -114,7 +129,6 @@ public static class RequerimientosEndpoints
             {
                 if (det.Id.HasValue && det.Id.Value > 0)
                 {
-                    // Es un material que ya existía, lo actualizamos
                     var existente = req.Detalles.FirstOrDefault(d => d.Id == det.Id.Value);
                     if (existente != null)
                     {
@@ -126,7 +140,6 @@ public static class RequerimientosEndpoints
                 }
                 else
                 {
-                    // Es un material completamente nuevo agregado durante la edición
                     req.Detalles.Add(new DetalleRequerimiento
                     {
                         Name = det.Name,
@@ -142,21 +155,22 @@ public static class RequerimientosEndpoints
         });
 
 
-        // 5.5 GET: Reporte de suma de materiales por rango de fechas
-        group.MapGet("/reporte", async (string material, DateTime inicio, DateTime fin, MaterialContext dbContext) =>
+// 5.5 GET: Reporte de suma de materiales por rango de fechas
+        group.MapGet("/reporte", async (string material, DateTime inicio, DateTime fin, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
-            // Ajustamos la fecha "fin" para que incluya todo ese día hasta las 23:59:59
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
             var fechaFinAjustada = fin.Date.AddDays(1);
 
             var reporte = await dbContext.DetallesRequerimiento
                 .Include(d => d.Requerimiento)
                 .Where(d => 
-                    d.Requerimiento!.FechaSolicitud >= inicio.Date &&
+                    d.Requerimiento!.ProyectoId == proyectoId && // <-- ¡NUEVO FILTRO MAESTRO!
+                    d.Requerimiento.FechaSolicitud >= inicio.Date &&
                     d.Requerimiento.FechaSolicitud < fechaFinAjustada &&
                     d.Name.ToLower().Contains(material.ToLower()) &&
-                    d.Requerimiento.Estado != "Rechazado" // Ignoramos pedidos rechazados
+                    d.Requerimiento.Estado != "Rechazado" 
                 )
-                .GroupBy(d => new { d.Name, d.Unit }) // Agrupamos por nombre Y unidad
+                .GroupBy(d => new { d.Name, d.Unit }) 
                 .Select(g => new {
                     Material = g.Key.Name,
                     Unidad = g.Key.Unit,
@@ -167,10 +181,18 @@ public static class RequerimientosEndpoints
             return Results.Ok(reporte);
         });
 
-        // DELETE: Borrar un pedido completo (y sus materiales por cascada)
-        group.MapDelete("/{id}", async (int id, MaterialContext dbContext) =>
+// DELETE: Borrar un pedido completo (y sus materiales por cascada)
+        group.MapDelete("/{id}", async (int id, MaterialContext dbContext, ClaimsPrincipal user) =>
         {
-            await dbContext.Requerimientos.Where(r => r.Id == id).ExecuteDeleteAsync();
+            int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
+
+            // ¡NUEVO! Ejecutamos el Delete validando el ProyectoId para que nadie borre lo ajeno
+            var borrados = await dbContext.Requerimientos
+                .Where(r => r.Id == id && r.ProyectoId == proyectoId)
+                .ExecuteDeleteAsync();
+
+            if (borrados == 0) return Results.NotFound();
+
             return Results.NoContent();
         });
     }
