@@ -10,3 +10,6 @@ obj/
 # Archivos de entorno y configuraciones de usuario locales
 .env
 appsettings.Development.json
+
+#sas
+*.http
