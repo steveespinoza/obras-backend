@@ -11,5 +11,3 @@ obj/
 .env
 appsettings.Development.json
 
-#sas
-*.http
