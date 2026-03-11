@@ -52,3 +52,11 @@ public record UpdateDetalleDto(
 public record UpdateRequerimientoDto(
     [Required][MinLength(1, ErrorMessage = "Debe incluir al menos un material")] List<UpdateDetalleDto> Detalles
 );
+
+// Este DTO genérico <T> nos servirá para paginar CUALQUIER lista
+public record PaginacionDto<T>(
+    List<T> Items, 
+    int TotalItems, 
+    int PaginaActual, 
+    int TotalPaginas
+);

@@ -11,10 +11,19 @@ public static class RequerimientosEndpoints
         var group = app.MapGroup("/requerimientos").RequireAuthorization();
 
         // GET: Obtener lista de pedidos
-        group.MapGet("/", async (IRequerimientoService reqService, ClaimsPrincipal user) =>
+// GET: Obtener lista de pedidos
+        group.MapGet("/", async (int? pagina, int? cantidad, IRequerimientoService reqService, ClaimsPrincipal user) =>
         {
+            int p = pagina ?? 1;
+            int c = cantidad ?? 50; 
+            
+            // Extraemos los datos seguros del Token (JWT)
             int proyectoId = int.Parse(user.FindFirst("ProyectoId")!.Value);
-            var requerimientos = await reqService.ObtenerTodosAsync(proyectoId);
+            string rol = user.FindFirst(ClaimTypes.Role)!.Value;
+            int trabajadorId = int.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            
+            // El servicio ahora sabrá exactamente quién está pidiendo la información
+            var requerimientos = await reqService.ObtenerTodosAsync(proyectoId, p, c, rol, trabajadorId);
             return Results.Ok(requerimientos);
         });
 

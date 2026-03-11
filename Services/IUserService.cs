@@ -2,9 +2,9 @@ using Obras.Api.Dtos;
 
 namespace Obras.Api.Services;
 
-public record UserSummaryDto(int Id, string NombreCompleto, string Username, string Especialidad, string Telefono, string ProyectoNombre);
-public record LoginResponseDto(int Id, string Name, string Role, int? ProyectoId, string Token);
+public record UserSummaryDto(int Id, string Nombre, string Apellido, string NombreCompleto, string Username, string Especialidad, string Telefono, int? ProyectoId, string ProyectoNombre);
 
+public record LoginResponseDto(int Id, string Name, string Role, int? ProyectoId, string Token);
 public interface IUserService
 {
     Task<List<UserSummaryDto>> ObtenerTodosAsync(string rol, int miProyectoId);

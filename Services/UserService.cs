@@ -17,6 +17,7 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
         var query = dbContext.UsuariosAcceso
             .Include(u => u.Trabajador) 
                 .ThenInclude(t => t.Proyectos)
+            .AsSplitQuery() // <--- 🚀 NUEVO: Previene la sobrecarga de datos cruzados
             .AsQueryable();
 
         // Lógica de seguridad: El Admin solo ve a su gente
@@ -25,12 +26,16 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
             query = query.Where(u => u.Trabajador != null && u.Trabajador.Proyectos.Any(p => p.Id == miProyectoId));
         }
 
+// Dentro de ObtenerTodosAsync, cambia el select por esto:
         return await query.Select(u => new UserSummaryDto(
                 u.Id,
+                u.Nombre,
+                u.Apellido,
                 u.Trabajador != null ? u.Trabajador.NombreCompleto : $"{u.Nombre} {u.Apellido}",
                 u.Username,
                 u.Especialidad,
                 u.Telefono,
+                u.Trabajador != null ? (int?)u.Trabajador.Proyectos.FirstOrDefault()!.Id : null,
                 (u.Trabajador != null && u.Trabajador.Proyectos.Any()) 
                     ? string.Join(", ", u.Trabajador.Proyectos.Select(p => p.Nombre))
                     : "Sin proyecto"
@@ -86,6 +91,9 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
 
         if (await dbContext.UsuariosAcceso.AnyAsync(u => u.Username == dto.Username))
             return (false, "El nombre de usuario ya está en uso.");
+        // ¡NUEVA REGLA DE NEGOCIO!
+        if (rolCreador == AppRoles.Admin && adminProyectoId <= 0)
+            return (false, "No puedes registrar personal porque no tienes ninguna obra asignada actualmente.");
 
         var nuevoAcceso = new UsuarioAcceso { 
             Nombre = dto.Nombre, Apellido = dto.Apellido, Username = dto.Username, 
@@ -111,12 +119,29 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
         await dbContext.SaveChangesAsync();
 
         // Coronar como líder si el Jefe lo registró
+// Coronar como líder si el Jefe lo registró
         if (rolCreador == AppRoles.Jefe && dto.Especialidad == Especialidades.Administracion && dto.ProyectoId.HasValue)
         {
             var proyectoVinculado = await dbContext.Proyectos.FindAsync(dto.ProyectoId.Value);
             if (proyectoVinculado != null)
             {
+                // 1. ¡NUEVO! Detectamos si ya había un admin antes y le quitamos la obra de su historial
+                var viejoAdminId = proyectoVinculado.AdminId;
+                if (viejoAdminId.HasValue)
+                {
+                    var viejoTrabajador = await dbContext.Trabajadores
+                        .Include(t => t.Proyectos)
+                        .FirstOrDefaultAsync(t => t.UsuarioAccesoId == viejoAdminId.Value);
+                        
+                    if (viejoTrabajador != null) 
+                    {
+                        viejoTrabajador.Proyectos.Remove(proyectoVinculado);
+                    }
+                }
+
+                // 2. Asignamos al nuevo usuario como el admin definitivo
                 proyectoVinculado.AdminId = nuevoAcceso.Id;
+                
                 await dbContext.SaveChangesAsync();
             }
         }
@@ -128,6 +153,7 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
     {
         var usuario = await dbContext.UsuariosAcceso
             .Include(u => u.Trabajador)
+                .ThenInclude(t => t.Proyectos) // <-- IMPORTANTE: Incluir proyectos
             .FirstOrDefaultAsync(u => u.Id == id);
             
         if (usuario == null) return (false, "Usuario no encontrado", true);
@@ -144,10 +170,52 @@ public class UserService(MaterialContext dbContext, IConfiguration config) : IUs
             usuario.Password = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
         if (usuario.Trabajador != null)
+        {
             usuario.Trabajador.NombreCompleto = $"{dto.Nombre} {dto.Apellido}";
 
+// LÓGICA DE REASIGNACIÓN DE OBRAS
+            var proyectoActual = usuario.Trabajador.Proyectos.FirstOrDefault();
+
+            if (proyectoActual?.Id != dto.ProyectoId)
+            {
+                // 1. Limpieza total y segura: Le quitamos la obra antigua
+                if (usuario.Trabajador.Proyectos.Any())
+                {
+                    // Liberamos el AdminId de la obra en la base de datos
+                    var obraVieja = await dbContext.Proyectos.FindAsync(proyectoActual!.Id);
+                    if (obraVieja != null && obraVieja.AdminId == usuario.Id)
+                    {
+                        obraVieja.AdminId = null; 
+                    }
+                    
+                    // Vaciamos la lista completa para forzar a EF Core a borrar la relación
+                    usuario.Trabajador.Proyectos.Clear();
+                }
+
+                // 2. Asignarlo al nuevo proyecto (si seleccionaron uno)
+                if (dto.ProyectoId.HasValue && dto.ProyectoId.Value > 0)
+                {
+                    var obraNueva = await dbContext.Proyectos.FindAsync(dto.ProyectoId.Value);
+                    if (obraNueva != null)
+                    {
+                        // Si la obra nueva ya tenía a OTRO admin, se lo quitamos a la fuerza
+                        if (obraNueva.AdminId.HasValue && obraNueva.AdminId != usuario.Id)
+                        {
+                            var adminAnterior = await dbContext.Trabajadores
+                                .Include(t => t.Proyectos)
+                                .FirstOrDefaultAsync(t => t.UsuarioAccesoId == obraNueva.AdminId.Value);
+                            if (adminAnterior != null) adminAnterior.Proyectos.Clear(); // También usamos Clear aquí
+                        }
+
+                        usuario.Trabajador.Proyectos.Add(obraNueva);
+                        obraNueva.AdminId = usuario.Id;
+                    }
+                }
+            }
+        }
+
         await dbContext.SaveChangesAsync();
-        return (true, "Datos del usuario actualizados", false);
+        return (true, "Datos y asignación del administrador actualizados.", false);
     }
 
     private string GenerarToken(List<Claim> claims)

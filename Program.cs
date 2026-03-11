@@ -50,6 +50,8 @@ builder.Services.AddScoped<IRequerimientoService, RequerimientoService>(); // <-
 builder.Services.AddScoped<IProyectoService, ProyectoService>(); // <-- NUEVO
 builder.Services.AddScoped<IUserService, UserService>(); // <-- EL ÚLTIMO REY
 builder.AddMatDb();
+builder.Services.AddExceptionHandler<Obras.Api.Middlewares.GlobalExceptionHandler>(); // <-- REGISTRAMOS NUESTRO CAZADOR
+builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
@@ -58,6 +60,7 @@ app.UseCors("PermitirReact");
 // ==========================================
 // 3. ACTIVAR SEGURIDAD (El orden importa)
 // ==========================================
+app.UseExceptionHandler(); // <-- ¡ACTIVAMOS EL ESCUDO GLOBAL! (Añadir esta línea)
 app.UseAuthentication(); // Primero verifica quién eres
 app.UseAuthorization();  // Luego verifica qué puedes hacer
 

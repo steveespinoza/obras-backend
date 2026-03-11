@@ -4,7 +4,8 @@ namespace Obras.Api.Services;
 
 public interface IRequerimientoService
 {
-    Task<List<RequerimientoSummaryDto>> ObtenerTodosAsync(int proyectoId);
+// Reemplaza la línea vieja por esta:
+    Task<PaginacionDto<RequerimientoSummaryDto>> ObtenerTodosAsync(int proyectoId, int pagina, int cantidad, string rol, int trabajadorId);
     Task<RequerimientoDetailsDto?> ObtenerPorIdAsync(int id, int proyectoId);
     Task<int> CrearAsync(CreateRequerimientoDto dto, int proyectoId);
     Task<bool> CambiarEstadoAsync(int id, string estado, int proyectoId);

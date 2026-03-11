@@ -6,15 +6,31 @@ using Obras.Api.Models;
 
 namespace Obras.Api.Services;
 
-public class RequerimientoService(MaterialContext dbContext) : IRequerimientoService
+// DESPUÉS
+public class RequerimientoService(MaterialContext dbContext, ILogger<RequerimientoService> logger) : IRequerimientoService
 {
-    public async Task<List<RequerimientoSummaryDto>> ObtenerTodosAsync(int proyectoId)
+    public async Task<PaginacionDto<RequerimientoSummaryDto>> ObtenerTodosAsync(int proyectoId, int pagina, int cantidad, string rol, int trabajadorId)
     {
-        return await dbContext.Requerimientos
+        // 1. Filtramos por la obra
+        var queryBase = dbContext.Requerimientos
+            .Where(r => r.ProyectoId == proyectoId);
+
+        // 2. ¡EL FILTRO DE SEGURIDAD! Si es operario, solo ve sus propios pedidos
+        if (rol == AppRoles.User)
+        {
+            queryBase = queryBase.Where(r => r.TrabajadorId == trabajadorId);
+        }
+
+        int totalItems = await queryBase.CountAsync();
+        int totalPaginas = totalItems > 0 ? (int)Math.Ceiling(totalItems / (double)cantidad) : 1;
+
+        var items = await queryBase
+            .OrderByDescending(r => r.FechaSolicitud)
+            .Skip((pagina - 1) * cantidad)
+            .Take(cantidad)
             .Include(r => r.Trabajador)
                 .ThenInclude(t => t.UsuarioAcceso)
             .Include(r => r.Detalles)
-            .Where(r => r.ProyectoId == proyectoId)
             .Select(r => new RequerimientoSummaryDto(
                 r.Id,
                 r.FechaSolicitud,
@@ -24,7 +40,10 @@ public class RequerimientoService(MaterialContext dbContext) : IRequerimientoSer
                 r.Detalles.Count
             ))
             .AsNoTracking()
+            .AsSplitQuery()
             .ToListAsync();
+
+        return new PaginacionDto<RequerimientoSummaryDto>(items, totalItems, pagina, totalPaginas);
     }
 
     public async Task<RequerimientoDetailsDto?> ObtenerPorIdAsync(int id, int proyectoId)
@@ -33,6 +52,7 @@ public class RequerimientoService(MaterialContext dbContext) : IRequerimientoSer
             .Include(r => r.Trabajador)
             .Include(r => r.Detalles)
             .AsNoTracking() // Lo hacemos más rápido porque es solo lectura
+            .AsSplitQuery() // <--- 🚀 NUEVO: Evita la explosión cartesiana 
             .FirstOrDefaultAsync(r => r.Id == id && r.ProyectoId == proyectoId);
 
         if (req is null) return null;
@@ -82,6 +102,7 @@ public class RequerimientoService(MaterialContext dbContext) : IRequerimientoSer
 
     public async Task<(bool Exito, string MensajeError)> ActualizarCompletoAsync(int id, UpdateRequerimientoDto dto, int proyectoId)
     {
+        // Buscamos el requerimiento
         var req = await dbContext.Requerimientos
             .Include(r => r.Detalles)
             .FirstOrDefaultAsync(r => r.Id == id && r.ProyectoId == proyectoId);
@@ -92,45 +113,83 @@ public class RequerimientoService(MaterialContext dbContext) : IRequerimientoSer
         if (req.Estado != RequerimientoEstados.Pendiente)
             return (false, "Solo se pueden editar pedidos en estado Pendiente.");
 
-        var incomingIds = dto.Detalles.Where(d => d.Id.HasValue).Select(d => d.Id.Value).ToList();
-        var detallesAEliminar = req.Detalles.Where(d => !incomingIds.Contains(d.Id)).ToList();
-        dbContext.DetallesRequerimiento.RemoveRange(detallesAEliminar);
+        // INICIAMOS LA TRANSACCIÓN
+        using var transaction = await dbContext.Database.BeginTransactionAsync();
 
-        foreach (var det in dto.Detalles)
+        try
         {
-            if (det.Id.HasValue && det.Id.Value > 0)
+            // 1. Identificar y eliminar detalles que ya no vienen desde React
+            var incomingIds = dto.Detalles.Where(d => d.Id.HasValue).Select(d => d.Id.Value).ToList();
+            var detallesAEliminar = req.Detalles.Where(d => !incomingIds.Contains(d.Id)).ToList();
+            
+            if (detallesAEliminar.Any())
             {
-                var existente = req.Detalles.FirstOrDefault(d => d.Id == det.Id.Value);
-                if (existente != null)
+                dbContext.DetallesRequerimiento.RemoveRange(detallesAEliminar);
+            }
+
+            // 2. Actualizar existentes o agregar nuevos
+            foreach (var det in dto.Detalles)
+            {
+                if (det.Id.HasValue && det.Id.Value > 0)
                 {
-                    existente.Name = det.Name; existente.Unit = det.Unit;
-                    existente.Quantity = det.Quantity; existente.Brand = det.Brand;
+                    var existente = req.Detalles.FirstOrDefault(d => d.Id == det.Id.Value);
+                    if (existente != null)
+                    {
+                        existente.Name = det.Name; 
+                        existente.Unit = det.Unit;
+                        existente.Quantity = det.Quantity; 
+                        existente.Brand = det.Brand;
+                    }
+                }
+                else
+                {
+                    req.Detalles.Add(new DetalleRequerimiento
+                    {
+                        Name = det.Name, 
+                        Unit = det.Unit, 
+                        Quantity = det.Quantity, 
+                        Brand = det.Brand
+                    });
                 }
             }
-            else
-            {
-                req.Detalles.Add(new DetalleRequerimiento
-                {
-                    Name = det.Name, Unit = det.Unit, Quantity = det.Quantity, Brand = det.Brand
-                });
-            }
-        }
 
-        await dbContext.SaveChangesAsync();
-        return (true, string.Empty);
+            // 3. Guardar los cambios en la base de datos
+            await dbContext.SaveChangesAsync();
+
+            // 4. SI TODO SALIÓ BIEN, CONFIRMAMOS LA TRANSACCIÓN
+            await transaction.CommitAsync();
+            
+            return (true, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            // SI ALGO FALLA, REVERTIMOS TODO
+            await transaction.RollbackAsync();
+            
+            // Registramos el error de forma estructurada para facilitar la depuración
+            logger.LogError(ex, "🔥 Error crítico al actualizar el requerimiento con ID: {RequerimientoId} en el proyecto: {ProyectoId}", id, proyectoId);
+            
+            return (false, "Ocurrió un error inesperado al actualizar el requerimiento. Los cambios han sido descartados.");
+        }
     }
 
     public async Task<object> ObtenerReporteAsync(string material, DateTime inicio, DateTime fin, int proyectoId)
     {
-        var fechaFinAjustada = fin.Date.AddDays(1);
+        // 1. SOLUCIÓN POSTGRESQL: Forzamos a que .NET trate las fechas entrantes como UTC
+        var inicioUtc = DateTime.SpecifyKind(inicio.Date, DateTimeKind.Utc);
+        var finUtc = DateTime.SpecifyKind(fin.Date, DateTimeKind.Utc).AddDays(1); // Sumamos 1 día para incluir todo el último día
+
+        // 2. Pasamos el material a minúsculas en memoria para que la consulta SQL sea más limpia
+        var materialBuscado = material.ToLower();
+
         return await dbContext.DetallesRequerimiento
             .Include(d => d.Requerimiento)
             .Where(d => 
                 d.Requerimiento!.ProyectoId == proyectoId &&
-                d.Requerimiento.FechaSolicitud >= inicio.Date &&
-                d.Requerimiento.FechaSolicitud < fechaFinAjustada &&
-                d.Name.ToLower().Contains(material.ToLower()) &&
-                d.Requerimiento.Estado != RequerimientoEstados.Rechazado // <-- Constante
+                d.Requerimiento.FechaSolicitud >= inicioUtc && // Comparamos UTC contra UTC
+                d.Requerimiento.FechaSolicitud < finUtc &&
+                d.Name.ToLower().Contains(materialBuscado) &&
+                d.Requerimiento.Estado != RequerimientoEstados.Rechazado 
             )
             .GroupBy(d => new { d.Name, d.Unit }) 
             .Select(g => new {

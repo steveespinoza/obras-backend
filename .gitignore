@@ -1,13 +1,27 @@
-# Carpetas de compilación de C#
+# ==========================================
+# 1. Carpetas de compilación de .NET
+# ==========================================
 bin/
 obj/
+publish/
 
-# Base de datos local (¡No queremos subir esto a internet!)
+# ==========================================
+# 2. Archivos de entorno y configuraciones de seguridad
+# ==========================================
+.env
+appsettings.Development.json
+appsettings.Production.json
+
+# ==========================================
+# 3. Bases de datos locales (Archivos viejos por si acaso)
+# ==========================================
 *.db
 *.db-shm
 *.db-wal
 
-# Archivos de entorno y configuraciones de usuario locales
-.env
-appsettings.Development.json
-
+# ==========================================
+# 4. Archivos de tu editor de código (VS Code / Visual Studio)
+# ==========================================
+.vscode/
+.vs/
+*.user
